@@ -2,6 +2,8 @@ import argparse
 import time
 from datetime import datetime
 from pathlib import Path
+import cv2
+import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torchvision.models import resnet18
@@ -57,24 +59,34 @@ def data_transform():
     return transforms.Compose(transform_list)
 
 
+def swap_box_xy(box):
+    pt1 = (box[0][1], box[0][0])
+    pt2 = (box[1][1], box[1][0])
+    return pt1, pt2
+
+
 if __name__ == '__main__':
 
-    max_data_items = 10
-    IoU_threshold = 0.02
     device = torch.device('cpu')
 
     # ----- set up argument parser for command line inputs ----- #
     argParser = argparse.ArgumentParser()
-    argParser.add_argument('-i', metavar='input_dir', type=str, help='input dir (./)')
-    argParser.add_argument('-m', metavar='model_dir', type=str, help='model dir (./)')
-    argParser.add_argument('-d', metavar='display', type=str, help='[y/N]')
+    argParser.add_argument('-input_dir', metavar='input_dir', type=str, help='input dir (./)')
+    argParser.add_argument('-model_dir', metavar='model_dir', type=str, help='model dir (./)')
+    argParser.add_argument('-iou', metavar='iou_threshold', type=float, help='0.02')
+    argParser.add_argument('-max_images', metavar='max_images', type=int, help='10')
+    argParser.add_argument('-display', metavar='display', type=str, help='[y/N]')
+    argParser.add_argument('-verbose', metavar='verbose', type=str, help='[y/N]')
     argParser.add_argument('-cuda', metavar='cuda', type=str, help='[y/N]')
 
     # ----- get args from the arg parser ----- #
     args = argParser.parse_args()
-    input_dir = Path(args.i)
-    model_dir = Path(args.m)
-    show_images = str(args.d).lower() == 'y'
+    input_dir = Path(args.input_dir)
+    model_dir = Path(args.model_dir)
+    IoU_threshold = float(args.iou)
+    max_data_items = int(args.max_images)
+    show_images = str(args.display).lower() == 'y'
+    verbose = str(args.verbose).lower() == "y"
     use_cuda = str(args.cuda).lower() == 'y'
 
     print("CudaIsAvailable: {}, UseCuda: {}".format(torch.cuda.is_available(), use_cuda))
@@ -99,49 +111,51 @@ if __name__ == '__main__':
     # ----- iterate through the dataset ----- #
     print("{} starting test...".format(datetime.now()))
     i = 0
+    predicted_ious = []
     start_time = time.time()
+
     for item in enumerate(dataset):
+        if verbose:
+            print("item #", i+1)
         idx = item[0]
         image = item[1][0]
         label = item[1][1]
 
-        # subdivide the image into regions
+        # determine ground truth ROI's
         idx = dataset.class_label['Car']
-        car_ROIs = dataset.strip_ROIs(class_ID=idx, label_list=label)
-        anchor_centers = anchors.calc_anchor_centers(image.shape, anchors.grid)
+        ground_truth_rois = dataset.strip_ROIs(class_ID=idx, label_list=label)
+        image_copy = image.copy()
+        for g in range(len(ground_truth_rois)):
+            p1, p2 = swap_box_xy(ground_truth_rois[g])
+            cv2.rectangle(image_copy, p1, p2, color=(0, 255, 0))
 
-        # determine regions that contain a car
+        # subdivide image into grid of ROI's
+        anchor_centers = anchors.calc_anchor_centers(image.shape, anchors.grid)
         ROIs, boxes = anchors.get_anchor_ROIs(image, anchor_centers, anchors.shapes)
         ROI_IoUs = []
         for idx in range(len(ROIs)):
-            ROI_IoUs += [anchors.calc_max_IoU(boxes[idx], car_ROIs)]
+            ROI_IoUs += [anchors.calc_max_IoU(boxes[idx], ground_truth_rois)]
 
         # create labelled batch of ROI's for current image
         roi_batch = []
         for k in range(len(boxes)):
+            p1, p2 = swap_box_xy(boxes[k])
+            roi = image[p1[1]:p2[1], p1[0]:p2[0]]
             name_class = 0
             if ROI_IoUs[k] > IoU_threshold:
                 name_class = 1
-            box = boxes[k]
-            pt1 = (box[0][1], box[0][0])
-            pt2 = (box[1][1], box[1][0])
-            roi = image[pt1[1]:pt2[1], pt1[0]:pt2[0]]
-            roi_batch.append((roi, name_class))
+                # cv2.rectangle(image_copy, pt1, pt2, color=(0, 0, 255))
+            roi_batch.append((roi, name_class, (p1, p2)))
 
-            # if show_images:
-            #     print(roi_batch[k][1])
-            #     cv2.imshow('roi', roi)
-            #     key = cv2.waitKey(0)
-            #     if key == ord('x'):
-            #         break
-
+        # convert batch of ROI's to a data loader
         batch_size = len(roi_batch)
         batch_dataset = ROIBatchDataset(roi_batch, data_transform())
-        batch_loader = DataLoader(batch_dataset, batch_size=batch_size)
+        batch_loader = DataLoader(batch_dataset, batch_size=batch_size, shuffle=False)
 
         # ----- testing batch of ROI's ----- #
         correct = 0
-        for images, labels in batch_loader:
+        predicted = []
+        for images, labels, _ in batch_loader:
             images = images.to(device=device)
             labels = labels.to(device=device)
             output = model(images)
@@ -149,14 +163,30 @@ if __name__ == '__main__':
             correct += (predicted == labels).sum().item()
             del images, labels, output
 
-        print('Accuracy of image #{} for {} ROIs: {:.2f} %'.format(i+1, batch_size, 100 * correct / batch_size))
+        if verbose:
+            print('Accuracy of image #{} for {} ROIs: {:.2f} %'.format(i+1, batch_size, 100 * correct / batch_size))
 
-        # display original image with model's predicted boxes around cars
+        # determine IoU for predicted car regions
+        image_ious = []
+        for j in range(len(predicted)):
+            if predicted[j] == 1:
+                box = roi_batch[j][2]
+                cv2.rectangle(image_copy, box[0], box[1], color=(255, 0, 255))
+                box = swap_box_xy(box)
+                image_ious.append(anchors.calc_max_IoU(box, ground_truth_rois))
+                predicted_ious.append(anchors.calc_max_IoU(box, ground_truth_rois))
+        if verbose:
+            print("Mean IoU of image #{} for {} ROIs: {:.4f}".format(i+1, batch_size, np.mean(image_ious)))
 
-        # calculate model's IoU score against original image IoU
+        # display image with ground truth and predicted bounding boxes
+        if show_images:
+            cv2.imshow('predicted boxes (pink), ground truth boxes (green)', image_copy)
+            key = cv2.waitKey(0)
+            if key == ord('x'):
+                break
 
+        # increment item num
         i += 1
-        print("item #", i)
         if max_data_items > 0 and i >= max_data_items:
             break
 
@@ -168,4 +198,4 @@ if __name__ == '__main__':
     total_time = "{:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds)
     print("{} test completed...".format(datetime.now()))
     print("elapsed time: {}".format(total_time))
-    # print('Accuracy of the network on the {} test images: {:.2f} %'.format(total, 100 * correct / total))
+    print("total mean IoU for {} images: {:.4f}".format(len(dataset), np.mean(predicted_ious)))

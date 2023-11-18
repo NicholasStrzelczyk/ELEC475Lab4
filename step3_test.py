@@ -19,6 +19,20 @@ def data_transform():
     return transforms.Compose(transform_list)
 
 
+def append_confusion_matrix(predicted, labels, conf_matrix):
+    tp, tn, fp, fn = conf_matrix
+    for i in range(len(predicted)):
+        if predicted[i] == labels[i] and labels[i] == 1:
+            tp += 1
+        elif predicted[i] == labels[i] and labels[i] == 0:
+            tn += 1
+        elif predicted[i] != labels[i] and labels[i] == 0:
+            fp += 1
+        else:
+            fn += 1
+    return tp, tn, fp, fn
+
+
 if __name__ == '__main__':
 
     device = torch.device('cpu')
@@ -59,6 +73,11 @@ if __name__ == '__main__':
     start_time = time.time()
 
     # ----- Testing ----- #
+    tp = 0
+    tn = 0
+    fp = 0
+    fn = 0
+    conf_matrix = (tp, tn, fp, fn)
     with torch.no_grad():
         correct = 0
         total = 0
@@ -69,9 +88,11 @@ if __name__ == '__main__':
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+            conf_matrix = append_confusion_matrix(predicted, labels, conf_matrix)
             del images, labels, outputs
 
     end_time = time.time()
+    tp, tn, fp, fn = conf_matrix
 
     # ----- print final training statistics ----- #
     hours, rem = divmod(end_time - start_time, 3600)
@@ -79,3 +100,5 @@ if __name__ == '__main__':
     total_time = "{:0>2}:{:0>2}:{:05.2f}".format(int(hours), int(minutes), seconds)
     print("Total testing time: {}, ".format(total_time))
     print('Accuracy of the network on the {} test images: {:.2f} %'.format(total, 100 * correct / total))
+    print('True positives: {}, True negatives: {}'.format(tp, tn))
+    print('False positives: {}, False negatives: {}'.format(fp, fn))

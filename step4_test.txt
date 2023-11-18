@@ -1,1 +1,1 @@
-python3 step4_test.py -i ./../data/Kitti8/ -m ./classifier.pth -d y -cuda y
+python3 step4_test.py -input_dir ./../data/Kitti8/ -model_dir ./classifier.pth -iou 0.09 -max_images -1 -display n -verbose n -cuda y

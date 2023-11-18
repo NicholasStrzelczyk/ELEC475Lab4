@@ -6,9 +6,9 @@ class ROIBatchDataset(Dataset):
     def __init__(self, data, transform=None):
         super().__init__()
         self.transform = transform
-        self.images = [Image.fromarray(image) for image, _ in data]
-        self.labels = [label for _, label in data]
-        # create a parameter to keep track of each ROI's box coords from orig image
+        self.images = [Image.fromarray(image) for image, _, _ in data]
+        self.labels = [label for _, label, _ in data]
+        self.bboxes = [bbox for _, _, bbox in data]
 
     def __len__(self):
         return len(self.images)
@@ -17,4 +17,5 @@ class ROIBatchDataset(Dataset):
         image = self.images[index]
         image_sample = self.transform(image)
         label = self.labels[index]
-        return image_sample, label
+        bbox = self.bboxes[index]
+        return image_sample, label, bbox
