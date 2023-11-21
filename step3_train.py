@@ -1,7 +1,5 @@
 import argparse
-
 from matplotlib import pyplot as plt
-
 import KittiROIDataset as roids
 import time
 from datetime import datetime
@@ -11,13 +9,12 @@ import torchvision.transforms as transforms
 from torch import nn
 from torch.utils.data import DataLoader
 from torchsummary import torchsummary
-from torchvision.models import resnet18
+from ClassifierModel import ClassifierModel
 
 
 def data_transform():
     transform_list = [
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
+        transforms.Resize((128, 128), antialias=True),
         transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
     ]
     return transforms.Compose(transform_list)
@@ -47,14 +44,14 @@ if __name__ == '__main__':
 
     train_set = roids.KittiROIDataset(Path('./../data/Kitti8_ROIs/'), training=True, transform=data_transform())
     valid_set = roids.KittiROIDataset(Path('./../data/Kitti8_ROIs/'), training=False, transform=data_transform())
-    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=False)
+    train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True)
     valid_loader = DataLoader(valid_set, batch_size=batch_size, shuffle=False)
     train_set_length = len(train_set)
     valid_set_length = len(valid_set)
     n_batches = len(train_loader)
 
     # ----- initialize model and training parameters ----- #
-    model = resnet18(weights=None, num_classes=2)
+    model = ClassifierModel()
     model.train()
     print('model loaded OK!')
 
@@ -68,14 +65,14 @@ if __name__ == '__main__':
 
     model.to(device=device)
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=learn)
+    optimizer = torch.optim.SGD(model.parameters(), lr=learn, momentum=0.9)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer=optimizer, patience=5, verbose=True)
 
     # ----- begin training the model ----- #
     model.train()
     loss_train = []
     loss_valid = []
-    torchsummary.summary(model, input_size=(3, 256, 256))
+    # torchsummary.summary(model, input_size=(3, 128, 128))
     print("{} training...".format(datetime.now()))
     start_time = time.time()
 
@@ -86,29 +83,38 @@ if __name__ == '__main__':
         for images, labels in train_loader:
             images = images.to(device=device)
             labels = labels.to(device=device)
-            optimizer.zero_grad()
             outputs = model(images)
             loss = loss_fn(outputs, labels)
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
             epoch_loss_train += loss.item()
 
         scheduler.step(epoch_loss_train)
         loss_train.append(epoch_loss_train / train_set_length)
-        print("{} Epoch {}, train loss {:.7f}".format(datetime.now(), epoch + 1, epoch_loss_train / train_set_length))
 
         # ----- Validation ----- #
         with torch.no_grad():
+            correct = 0
+            total = 0
             for images, labels in valid_loader:
                 images = images.to(device=device)
                 labels = labels.to(device=device)
                 outputs = model(images)
+                _, predicted = torch.max(outputs.data, 1)
+                total += labels.size(0)
+                correct += (predicted == labels).sum().item()
                 loss = loss_fn(outputs, labels)
                 epoch_loss_valid += loss.item()
                 del images, labels, outputs
 
         loss_valid.append(epoch_loss_valid / valid_set_length)
-        print("{} Epoch {}, valid loss {:.7f}".format(datetime.now(), epoch + 1, epoch_loss_valid / valid_set_length))
+
+        print("{} Epoch {}, train loss {:.7f}, valid loss {:.7f}, valid accuracy {:.2f}%".format(
+            datetime.now(), epoch + 1,
+            epoch_loss_train / train_set_length,
+            epoch_loss_valid / valid_set_length,
+            100 * correct / total))
 
     end_time = time.time()
 

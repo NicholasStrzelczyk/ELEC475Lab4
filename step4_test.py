@@ -6,8 +6,10 @@ import cv2
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-from torchvision.models import resnet18
 import torchvision.transforms as transforms
+from torchvision.transforms import InterpolationMode
+
+from ClassifierModel import ClassifierModel
 from KittiAnchors import Anchors
 from KittiDataset import KittiDataset
 from ROIBatchDataset import ROIBatchDataset
@@ -52,9 +54,8 @@ def calc_max_IoU(ROI, ROI_list):
 
 def data_transform():
     transform_list = [
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Resize((224, 224), antialias=True),
+        transforms.ToTensor()
     ]
     return transforms.Compose(transform_list)
 
@@ -97,7 +98,7 @@ if __name__ == '__main__':
         print('using cpu ...')
 
     # ----- initialize model ----- #
-    model = resnet18(weights=None, num_classes=2)
+    model = ClassifierModel()
     model.load_state_dict(torch.load(model_dir))
     model.to(device=device)
     model.eval()
@@ -160,6 +161,7 @@ if __name__ == '__main__':
             labels = labels.to(device=device)
             output = model(images)
             _, predicted = torch.max(output.data, 1)
+            # print(predicted)
             correct += (predicted == labels).sum().item()
             del images, labels, output
 
@@ -176,7 +178,10 @@ if __name__ == '__main__':
                 image_ious.append(anchors.calc_max_IoU(box, ground_truth_rois))
                 predicted_ious.append(anchors.calc_max_IoU(box, ground_truth_rois))
         if verbose:
-            print("Mean IoU of image #{} for {} ROIs: {:.4f}".format(i+1, batch_size, np.mean(image_ious)))
+            if len(image_ious) == 0:
+                print("No cars were detected in image #{}".format(i + 1))
+            else:
+                print("Mean IoU of image #{} for {} detected cars: {:.4f}".format(i+1, len(image_ious), np.mean(image_ious)))
 
         # display image with ground truth and predicted bounding boxes
         if show_images:

@@ -7,14 +7,12 @@ import torch
 import torchvision.transforms as transforms
 from torch.utils.data import DataLoader
 from torchsummary import torchsummary
-from torchvision.models import resnet18
+from ClassifierModel import ClassifierModel
 
 
 def data_transform():
     transform_list = [
-        transforms.Resize((224, 224)),
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        transforms.Resize((128, 128), antialias=True),
     ]
     return transforms.Compose(transform_list)
 
@@ -50,7 +48,7 @@ if __name__ == '__main__':
     weight_file = Path(args.weight_file)
 
     test_set = roids.KittiROIDataset(Path('./../data/Kitti8_ROIs/'), training=False, transform=data_transform())
-    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_set, batch_size=batch_size, shuffle=False)
     test_set_length = len(test_set)
 
     print("CudaIsAvailable: {}, UseCuda: {}".format(torch.cuda.is_available(), use_cuda))
@@ -61,14 +59,14 @@ if __name__ == '__main__':
         print('using cpu ...')
 
     # ----- initialize model ----- #
-    model = resnet18(weights=None, num_classes=2)
+    model = ClassifierModel()
     model.load_state_dict(torch.load(weight_file))
     model.to(device=device)
     model.eval()
     print('model loaded OK!')
 
     # ----- begin testing the model ----- #
-    torchsummary.summary(model, input_size=(3, 256, 256))
+    # torchsummary.summary(model, input_size=(3, 128, 128))
     print("{} testing...".format(datetime.now()))
     start_time = time.time()
 

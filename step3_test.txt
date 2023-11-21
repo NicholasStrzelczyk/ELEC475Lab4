@@ -1,1 +1,1 @@
-python3 step3_test.py -weight_file ./classifier.pth -b 100 -cuda y
+python3 step3_test.py -weight_file ./classifier_new2.pth -b 192 -cuda y

@@ -1,1 +1,1 @@
-python3 step3_train.py -weight_file ./classifier.pth -plot_file ./step3_plot.png -learn 0.01 -e 40 -b 100 -cuda y
+python3 step3_train.py -weight_file ./classifier_new3.pth -plot_file ./step3_plot_new3.png -learn 0.001 -e 5 -b 192 -cuda y
